@@ -1,3 +1,12 @@
+/*
+// Poolsensor_relay.ino by George Timmermans
+// This sketch contains code from Adafruit, Arduino and Stephanie Maks(chronodot library)
+// The program reads several sensors on a regular interval, averages the results and determines the position of a valve and
+// if the pump is allowed to run. 
+//
+// for more info go to www.georgetimmermans.com
+*/
+
 #include <Wire.h>
 #include "Chronodot.h"
 #include <SPI.h>
@@ -45,6 +54,8 @@ enum sensorlist {Pool,SolarPanel,Brightness,IndoorTemp,IndoorHum};
 #define CHIPSELECT 8
 #define SAMPLETIME 30000
 #define NUMSAMPLES 30
+char filename[] = "LogAD_00.csv"; // filename must be 6 char 2 zeros
+File dataFile;
 
 //DHT temperature sensor
 #define DHTTYPE DHT21   // DHT 21 (AM2301)
@@ -92,29 +103,39 @@ void setup(void) {
   */
   RTC.adjust(DateTime(__DATE__, __TIME__));
   
-  Serial.print(F("Initializing SD card..."));
-  // make sure that the default chip select pin is set to
-  // output, even if you don't use it:
-  pinMode(CHIPSELECT, OUTPUT);
-
   // see if the card is present and can be initialized:
-  if (!SD.begin(CHIPSELECT)) {
-    Serial.println(F("Card failed, or not present."));
-    // don't do anything more:
-    return;
-  }
-  Serial.println(F("Card initialized."));
-  
-  // open the file. note that only one file can be open at a time,
-  // so you have to close this one before opening another.
-  File dataFile = SD.open("datalog.csv", FILE_WRITE);
+    if (!SD.begin(CHIPSELECT)) {
+        Serial.println("Card failed, or not present");
+        // don't do anything more:
+        return;
+    }
+    Serial.println("card initialized.");
+
+ // create a new file name for each reset/start
+    for (uint8_t i = 0; i < 100; i++) {
+        filename[6] = i/10 + '0';
+        filename[7] = i%10 + '0';
+        if (! SD.exists(filename))
+            break; // leave the loop!
+    }
+    if (!SD.open(filename, FILE_WRITE)) {
+            Serial.print("SD file open failed");
+    }
+    dataFile = SD.open(filename, FILE_WRITE);
+    if (dataFile) {
+        //print header
+        dataFile.println(F("Date,Time,Pool,SolarPanel,Brightness,IndoorTemp,IndoorHum,ValveState"));
         
-  // if the file is available, write to it:
-  if (dataFile) {
-    dataFile.println("Date,Time,Pool,SolarPanel,Brightness,IndoorTemp,IndoorHum,ValveState");
-    dataFile.close();
-  }
-    
+        // close the file:
+        dataFile.close();
+    }
+    // if the file isn't open, pop up an error:
+    else {
+        Serial.print(F("Error opening file: "));
+        Serial.println(filename);
+    }
+        
+  // clear array;  
   for (uint8_t i = 0; i < totalSensors; i++)
     average[i] = 0;
     
@@ -176,6 +197,8 @@ void loop(void) {
         Serial.println(F(" *C"));
       }
       
+      average[Brightness] = map(average[Brightness], 0, 1023, 50, 250);
+      
       controlRelay();
       logToSD();
       printScreen();
@@ -230,7 +253,7 @@ void logToSD()  {
                
   // open the file. note that only one file can be open at a time,
   // so you have to close this one before opening another.
-  File dataFile = SD.open("datalog.csv", FILE_WRITE);
+  dataFile = SD.open(filename, FILE_WRITE);
         
   // if the file is available, write to it:
   if (dataFile) {
@@ -241,7 +264,8 @@ void logToSD()  {
   }
   // if the file isn't open, pop up an error:
   else {
-    Serial.println(F("Error opening datalog.csv"));
+    Serial.print(F("Error opening file: "));
+        Serial.println(filename);
   }
 }
 
