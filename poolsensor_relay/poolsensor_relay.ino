@@ -22,8 +22,8 @@ Chronodot RTC;
 #define THERMISTORPIN2 A1 
 #define LDRPIN1 A2 
 #define DHTPIN 2
-#define RELAYVALVEPIN 5 
-#define RELAYPUMPPIN 6 
+int RELAYVALVEPIN = 4; 
+int RELAYPUMPPIN = 3; 
 
  /* SD card attached to SPI bus as follows:
  ** MOSI - pin 11
@@ -53,7 +53,7 @@ enum sensorlist {Pool,SolarPanel,Brightness,IndoorTemp,IndoorHum};
 // SD shield
 #define CHIPSELECT 8
 #define SAMPLETIME 30000
-#define NUMSAMPLES 30
+#define NUMSAMPLES 10
 char filename[] = "LogAD_00.csv"; // filename must be 6 char 2 zeros
 File dataFile;
 
@@ -64,8 +64,7 @@ DHT dht(DHTPIN, DHTTYPE);
 LiquidCrystal_I2C lcd(0x27,20,4);  // set the LCD address to 0x27 for a 20 chars and 4 line display
  
 const uint8_t totalSensors = ANALOGSENSORS + DIGITALSENSORS;
-uint8_t analogSensorArray[] = {THERMISTORPIN1, THERMISTORPIN2, LDRPIN1};
-float average[totalSensors];
+double average[totalSensors];
 uint8_t value = 0;
 uint8_t count = 0;
 unsigned long previousMillis = 0;
@@ -77,6 +76,7 @@ boolean valveON;
 
  
 void setup(void) {
+  
   Serial.begin(9600);
   Serial.println(F("Initializing Chronodot."));
   
@@ -94,6 +94,7 @@ void setup(void) {
   lcd.print(F("Made by"));
   lcd.setCursor(1, 2);
   lcd.print(F("George Timmermans"));
+  delay(2000);
   
   /*if (! RTC.isrunning()) {
     Serial.println(F("RTC is NOT running!"));
@@ -101,49 +102,61 @@ void setup(void) {
     RTC.adjust(DateTime(__DATE__, __TIME__));
   }
   */
+  
   RTC.adjust(DateTime(__DATE__, __TIME__));
   
+  lcd.clear();
+ 
+  
   // see if the card is present and can be initialized:
-    if (!SD.begin(CHIPSELECT)) {
-        Serial.println("Card failed, or not present");
-        // don't do anything more:
-        return;
-    }
+  if (!SD.begin(CHIPSELECT)) {
+    Serial.println("Card failed, or not present");
+    lcd.print("Card failed, or not present");
+  }
+  else {
     Serial.println("card initialized.");
+    lcd.print("card initialized.");
+  }
 
- // create a new file name for each reset/start
-    for (uint8_t i = 0; i < 100; i++) {
-        filename[6] = i/10 + '0';
-        filename[7] = i%10 + '0';
-        if (! SD.exists(filename))
-            break; // leave the loop!
-    }
-    if (!SD.open(filename, FILE_WRITE)) {
-            Serial.print("SD file open failed");
-    }
-    dataFile = SD.open(filename, FILE_WRITE);
-    if (dataFile) {
-        //print header
-        dataFile.println(F("Date,Time,Pool,SolarPanel,Brightness,IndoorTemp,IndoorHum,ValveState"));
+  // create a new file name for each reset/start
+  for (uint8_t i = 0; i < 100; i++) {
+    filename[6] = i/10 + '0';
+    filename[7] = i%10 + '0';
+    if (! SD.exists(filename))
+      break; // leave the loop!
+  }
+  if (!SD.open(filename, FILE_WRITE)) {
+    Serial.println("SD file open failed!");
+    lcd.clear();
+    lcd.print("SD file open failed!");
+  }
+  dataFile = SD.open(filename, FILE_WRITE);
+  if (dataFile) {
+    //print header
+    dataFile.println(F("Date,Time,Pool,SolarPanel,Brightness,IndoorTemp,IndoorHum,ValveState"));
         
-        // close the file:
-        dataFile.close();
-    }
-    // if the file isn't open, pop up an error:
-    else {
-        Serial.print(F("Error opening file: "));
-        Serial.println(filename);
-    }
+    // close the file:
+    dataFile.close();
+  } 
+  // if the file isn't open, pop up an error:
+  else {
+    Serial.print(F("Error opening file: "));
+    Serial.println(filename);
+    lcd.clear();
+    lcd.print("Error opening file: ");
+    lcd.print(filename);
+  }
         
   // clear array;  
   for (uint8_t i = 0; i < totalSensors; i++)
     average[i] = 0;
-    
+     
+  valveON = false;
+  
   pinMode(RELAYVALVEPIN, OUTPUT); 
   pinMode(RELAYPUMPPIN, OUTPUT); 
   digitalWrite(RELAYVALVEPIN, HIGH);
   digitalWrite(RELAYPUMPPIN, HIGH);
-  valveON = false;
 }
  
 void loop(void) {
@@ -152,53 +165,27 @@ void loop(void) {
     // save the last time you blinked the LED 
     previousMillis = currentMillis;   
 
+    // Read all the sensors
     if (count < NUMSAMPLES)  {
-      for (uint8_t i = 0; i < ANALOGSENSORS; i++)
-        average[i] += analogRead(analogSensorArray[i]);   
-      average[IndoorTemp] += dht.readTemperature();
-      average[IndoorHum] += dht.readHumidity();
+    //for (uint8_t i = 0; i < ANALOGSENSORS; i++)
+      //average[i] += analogRead(analogSensorArray[i]);  
+      average[0] += analogRead(A0);
+      average[1] += analogRead(A1);
+      average[2] += analogRead(A2);
+      average[3] += dht.readTemperature();
+      average[4] += dht.readHumidity();
       count++;
       Serial.print(count);
       if ( count < NUMSAMPLES)
         Serial.print(F(", "));
     }
+    
+    // Average the the sensor readings
     if (count == NUMSAMPLES)  {
       count = 0;
       Serial.println();    
-      for (uint8_t i = 0; i < totalSensors; i++) {
-        average[i] /= NUMSAMPLES;
-        Serial.print(F("Average sensor reading ")); 
-        Serial.print(i);
-        Serial.print(F(" = "));
-        Serial.println(average[i]);  
-      }
-      for (uint8_t i = 0; i < THERMISTORS; i++) {
-        // convert the value to resistance
-        average[i] = 1023 / average[i] - 1;
-        average[i] = SERIESRESISTOR / average[i];
-        Serial.print(F("Thermistor resistance ")); 
-        Serial.print(i);
-        Serial.print(F(" = "));
-        Serial.println(average[i]);
-      }
       
-      for (uint8_t i = 0; i < THERMISTORS; i++) {
-        average[i] = average[i] / THERMISTORNOMINAL;     // (R/Ro)
-        average[i] = log(average[i]);                  // ln(R/Ro)
-        average[i] /= BCOEFFICIENT;                   // 1/B * ln(R/Ro)
-        average[i] += 1.0 / (TEMPERATURENOMINAL + 273.15); // + (1/To)
-        average[i] = 1.0 / average[i];                 // Invert
-        average[i] -= 273.15;                         // convert to C
-     
-        Serial.print(F("Temperature ")); 
-        Serial.print(i);
-        Serial.print(F(" = "));
-        Serial.print(average[i]);
-        Serial.println(F(" *C"));
-      }
-      
-      average[Brightness] = map(average[Brightness], 0, 1023, 50, 250);
-      
+      averageData();
       controlRelay();
       logToSD();
       printScreen();
@@ -207,24 +194,84 @@ void loop(void) {
   }
 }
 
+void averageData()  {
+  for (uint8_t i = 0; i < totalSensors; i++) {
+    average[i] /= NUMSAMPLES;
+    /*
+    Serial.print(sensors[i]); 
+    Serial.print(F(" = "));
+    Serial.println(average[i]);  
+    */
+  }
+  
+  // Map to make it fit the graph in Excel better
+  average[2] = map(average[2], 0, 1023, 50, 250);
+      
+  // Convert analog values to temperature in degrees celsius.
+  calcThermistorTemp(0);
+  calcThermistorTemp(1);
+  
+  for (uint8_t i = 0; i < totalSensors; i++) {
+    Serial.print(sensors[i]); 
+    Serial.print(F(" = "));
+    Serial.println(average[i]);  
+  }
+}
+
+// Convert analog values to temperature in degrees celsius.
+void calcThermistorTemp(uint8_t i)  {
+  average[i] = 1023 / average[i] - 1;
+  average[i] = SERIESRESISTOR / average[i];
+        
+  /*
+  Serial.print(F("Thermistor resistance ")); 
+  Serial.print(i);
+  Serial.print(F(" = "));
+  Serial.println(average[i]);
+  */
+       
+  average[i] = average[i] / THERMISTORNOMINAL;     // (R/Ro)
+  average[i] = log(average[i]);                  // ln(R/Ro)
+  average[i] /= BCOEFFICIENT;                   // 1/B * ln(R/Ro)
+  average[i] += 1.0 / (TEMPERATURENOMINAL + 273.15); // + (1/To)
+  average[i] = 1.0 / average[i];                 // Invert
+  average[i] -= 273.15;                         // convert to C
+     
+  /*
+  Serial.print(F("Temperature ")); 
+  Serial.print(i);
+  Serial.print(F(" = "));
+  Serial.print(average[i]);
+  Serial.println(F(" *C"));
+  */
+}
+
+// Open or close valve depending on the temperature difference between swimmingpool and solarpanel
 void controlRelay()  {
-  if (average[SolarPanel] - average[Pool] > valveOpen & !valveON)  {
+  if (average[1] - average[0] > valveOpen & !valveON)  {
     digitalWrite(RELAYVALVEPIN, LOW);
     digitalWrite(RELAYPUMPPIN, LOW);
     valveON = true;
-    Serial.println("Valve Open, Pump ON");
+    Serial.println(F("Valve Open, Pump ON"));
   }
-  if (average[SolarPanel] - average[Pool] < valveClosed & valveON)  {
+  else if (average[1] - average[0] < valveClosed & valveON)  {
     digitalWrite(RELAYVALVEPIN, HIGH);
-    digitalWrite(RELAYPUMPPIN, HIGH);
+    digitalWrite(RELAYPUMPPIN, HIGH); 
     valveON = false;
-    Serial.println("Valve Closed, Pump OFF");
+    Serial.println(F("Valve Closed, Pump OFF"));
   }
+  else
+  {
+    Serial.print(F("Valve is "));
+    if (valveON)
+      Serial.println(F("Open, Pump ON"));
+    else
+      Serial.println(F("Closed, Pump OFF"));    
+  }   
 }
 
 void logToSD()  {
   DateTime now = RTC.now();
-      
   String dataString = "";
      
   dataString += String(now.year());
@@ -249,8 +296,7 @@ void logToSD()  {
   }
   dataString += String(F(","));
   dataString += String(valveON);
-      
-               
+              
   // open the file. note that only one file can be open at a time,
   // so you have to close this one before opening another.
   dataFile = SD.open(filename, FILE_WRITE);
@@ -265,21 +311,49 @@ void logToSD()  {
   // if the file isn't open, pop up an error:
   else {
     Serial.print(F("Error opening file: "));
-        Serial.println(filename);
+    Serial.println(filename);
   }
 }
 
 void printScreen()  {
+  /*
   lcd.clear();
-  for (uint8_t i = 0; i < 4; i++) { //4 is the maximum rows on the lcd screen.
+  for (uint8_t i = 0; i < 3; i++) { //4 is the maximum rows on the lcd screen.
     lcd.setCursor(0, i);
     lcd.print(sensors[i]); 
     lcd.setCursor(12, i);
     lcd.print("= ");
     lcd.print(average[i]);
   }
+  */
+  
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(sensors[0]); 
+  lcd.setCursor(12, 0);
+  lcd.print(F("= "));
+  lcd.print(average[0]);
+  
+  lcd.setCursor(0, 1);
+  lcd.print(sensors[1]);  
+  lcd.setCursor(12, 1);
+  lcd.print(F("= "));
+  lcd.print(average[1]);
+  
+  lcd.setCursor(0, 2);
+  lcd.print(F("difference")); 
+  lcd.setCursor(12, 2);
+  lcd.print(F("= "));
+  lcd.print(average[1] - average[0]);
+  
+  lcd.setCursor(0, 3);
+  lcd.print(F("valveState")); 
+  lcd.setCursor(12, 3);
+  lcd.print(F("= "));
+  lcd.print(valveON);
 }
 
+// Clear the array for the next set of data to be sampled
 void clearData()  {
   for (uint8_t i = 0; i < totalSensors; i++)
     average[i] = 0;
